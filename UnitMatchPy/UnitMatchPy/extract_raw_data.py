@@ -108,8 +108,8 @@ def extract_a_unit(
 
     channels = np.arange(0, n_channels)
 
-    all_sample_waveforms = np.zeros((sample_amount, spike_width, n_channels))
-    for i, idx in enumerate(data[:]):
+    all_sample_waveforms = np.zeros( (sample_amount, spike_width, n_channels))
+    for i, idx in enumerate(sample_idx[:]):
         if np.isnan(idx):
             continue
         tmp = data[
@@ -193,7 +193,7 @@ def extract_a_unit_KS4(
             tmp, 1, radius=2, axes=0
         )  # edges are handled differently to ML
         # window ~ radius *2 + 1
-        tmp = tmp - np.nanmean(tmp[:20, :], axis=0)
+        tmp = tmp - np.mean(tmp[:samples_before,:], axis = 0)
         all_sample_waveforms[i] = tmp
         n_waves += 1
 
