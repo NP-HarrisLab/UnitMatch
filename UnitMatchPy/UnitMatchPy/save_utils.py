@@ -103,7 +103,7 @@ def make_match_table(scores_to_include, matches, output_prob, total_score, outpu
     return df
 
 def save_to_output(save_dir, scores_to_include, matches, output_prob, avg_centroid, avg_waveform, avg_waveform_per_tp, max_site,
-                   total_score, output_threshold, clus_info, param, UIDs = None, matches_curated = None, save_match_table = True):
+                   total_score, output_threshold, drifts, clus_info, param, UIDs = None, matches_curated = None, save_match_table = True):
     """
     Saves all useful information calculated by UnitMatch to a given save_dir
 
@@ -161,6 +161,10 @@ def save_to_output(save_dir, scores_to_include, matches, output_prob, avg_centro
     param_path = os.path.join(save_dir, 'UMparam.pickle')
     with open(param_path, 'wb') as fp:
         pickle.dump(param, fp)
+        
+    #Save drifts
+    drift_path = os.path.join(save_dir, 'UMdrift.npy')
+    np.save(drift_path, drifts)
 
     #Save output
     match_prob_path = os.path.join(save_dir, 'MatchProb')
@@ -173,7 +177,7 @@ def save_to_output(save_dir, scores_to_include, matches, output_prob, avg_centro
     waveform_info_path = os.path.join(save_dir, 'WaveformInfo')
     np.savez(waveform_info_path, **waveform_info)
 
-    #save autimatuc matches
+    #save automatuc matches
     matches_path = os.path.join(save_dir, 'Matches')
     np.save(matches_path, matches)
 
