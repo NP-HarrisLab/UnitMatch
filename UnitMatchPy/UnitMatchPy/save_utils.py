@@ -97,13 +97,13 @@ def make_match_table(scores_to_include, matches, output_prob, total_score, outpu
         unit_a_int_id = xx.reshape(n_units*n_units)
         unit_b_int_id = yy.reshape(n_units*n_units)
 
-        unique_id_df = pd.DataFrame(np.array([unit_a_original_id, unit_b_original_id, unit_a_liberal_id, unit_b_liberal_id, unit_a_int_id, unit_b_int_id, unit_a_conservative_id, unit_b_conservative_id]).T, columns = ['UID1', 'UID2', 'UID Liberal 1', 'UID Liberal 2', 'UID int 1', 'UM UID int 2', 'UID Conservative 1', 'UID Conservative 2'])
+        unique_id_df = pd.DataFrame(np.array([unit_a_original_id, unit_b_original_id, unit_a_liberal_id, unit_b_liberal_id, unit_a_int_id, unit_b_int_id, unit_a_conservative_id, unit_b_conservative_id]).T, columns = ['UID1', 'UID2', 'UID Liberal 1', 'UID Liberal 2', 'UID int 1', 'UID int 2', 'UID Conservative 1', 'UID Conservative 2'])
         df = df.join(unique_id_df)
 
     return df
 
 def save_to_output(save_dir, scores_to_include, matches, output_prob, avg_centroid, avg_waveform, avg_waveform_per_tp, max_site,
-                   total_score, output_threshold, clus_info, param, UIDs = None, matches_curated = None, save_match_table = True):
+                   total_score, output_threshold, drifts, clus_info, param, UIDs = None, matches_curated = None, save_match_table = True):
     """
     Saves all useful information calculated by UnitMatch to a given save_dir
 
@@ -161,6 +161,10 @@ def save_to_output(save_dir, scores_to_include, matches, output_prob, avg_centro
     param_path = os.path.join(save_dir, 'UMparam.pickle')
     with open(param_path, 'wb') as fp:
         pickle.dump(param, fp)
+        
+    #Save drifts
+    drift_path = os.path.join(save_dir, 'UMdrift.npy')
+    np.save(drift_path, drifts)
 
     #Save output
     match_prob_path = os.path.join(save_dir, 'MatchProb')
@@ -173,7 +177,7 @@ def save_to_output(save_dir, scores_to_include, matches, output_prob, avg_centro
     waveform_info_path = os.path.join(save_dir, 'WaveformInfo')
     np.savez(waveform_info_path, **waveform_info)
 
-    #save autimatuc matches
+    #save automatuc matches
     matches_path = os.path.join(save_dir, 'Matches')
     np.save(matches_path, matches)
 
