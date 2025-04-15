@@ -178,7 +178,8 @@ def load_good_waveforms(wave_paths, unit_label_paths, param, good_units_only = T
         del tmp_waveform
         del tmp
 
-
+    # remove any nan or inf, which can occur if a very low spike count unit has been included
+    waveforms = np.nan_to_num(waveforms)
     n_units_per_session = np.zeros(n_sessions, dtype = 'int')
     waveform = np.array([])
 
@@ -238,8 +239,7 @@ def get_good_units(unit_label_paths, good = True):
             if good == True:
                 tmp_idx = np.argwhere(unit_label[:,1] == 'good')
             else:
-                tmp_idx = unit_label[:,0].astype(np.int32) # every unit index in the first column
-                
+                tmp_idx = unit_label[:,0].astype(np.int32) # every unit index in the first column               
         good_unit_idx = unit_label[tmp_idx, 0]
         good_units.append(good_unit_idx)
     return good_units
@@ -279,7 +279,11 @@ def load_good_units(good_units, wave_paths, param):
         for i in range(len(good_units[ls])):
             #loads in all GoodUnits for that session
             tmp_path_good = os.path.join(wave_paths[ls], f'Unit{int(good_units[ls][i].squeeze())}_RawSpikes.npy')
-            tmp_waveform[i] = np.load(tmp_path_good)
+            tmp_data = np.load(tmp_path_good)
+            # remove any nan or inf, which can occur if a very low spike count unit has been included    
+            tmp_data = np.nan_to_num(tmp_data)
+            tmp_waveform[i] = tmp_data
+
         #adds that session to the list
         waveforms.append(tmp_waveform)
 
@@ -478,6 +482,8 @@ def fill_missing_pos(KS_dir, n_channels):
         missed_pos_idx = np.argwhere(isin_2d(np.vstack(channel_pos_new), pos) == False)
         channel_pos[np.isnan(channel_pos)[:,0],:] = np.vstack(channel_pos_new)[missed_pos_idx]
         return channel_pos
+    else:
+        print('Need to fill in multiple positions')     
 
     channel_pos_fill = channel_pos.copy()
     #find all the positions not in the original channel_positions
@@ -486,7 +492,7 @@ def fill_missing_pos(KS_dir, n_channels):
     empty_idx = np.unique(np.argwhere(np.isnan(channel_pos))[:,0])
 
     #check to see if there are the same amount of empty positions as found positions
-    if missed_pos_idx.shape[0] == empty_idx.shape[0]:
+    if missed_pos_idxs.shape[0] == empty_idx.shape[0]:
         #go through each estimated missing positions
         for idx in missed_pos_idxs:
             missed_pos = np.vstack(channel_pos_new)[idx].squeeze()
