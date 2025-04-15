@@ -2,6 +2,7 @@ import os
 import shutil
 from pathlib import Path
 
+import cupy as cp
 import npx_utils as npx
 import numpy as np
 import pandas as pd
@@ -15,55 +16,6 @@ from UnitMatchPy.run import unit_match
 from UnitMatchPy.utils import get_probe_geometry, get_session_data, get_within_session
 
 
-def get_probe_folders(ks_folders, catgt_only=True):
-    probe_folders = {}
-    for ks_folder in ks_folders:
-        probe_num = npx.ks_helpers.get_probe_id(ks_folder)
-        if probe_num not in probe_folders:
-            probe_folders[probe_num] = []
-        catgt_folder = ks_folder.split(os.sep)[-3]
-        if not catgt_only or catgt_folder.startswith("catgt_"):
-            probe_folders[probe_num].append(ks_folder)
-    return probe_folders
-
-
-def get_same_channel_positions(ks_folders):
-    """
-    Get the kilosort folders with the same channel positions.
-    """
-    channel_positions = []
-    channel_positions_tuples = []
-    for ks_folder in ks_folders:
-        channel_position = np.load(os.path.join(ks_folder, "channel_positions.npy"))
-        # convert to immutable tuple
-        channel_position_tuple = tuple(map(tuple, channel_position))
-        channel_positions.append(channel_position)
-        channel_positions_tuples.append(channel_position_tuple)
-
-    most_common = mode(channel_positions_tuples, axis=0)
-    indices = [
-        i
-        for i in range(len(channel_positions))
-        if np.array_equal(channel_positions[i], most_common.mode)
-    ]
-    return [ks_folders[i] for i in indices]
-
-    # channel_map = np.load(os.path.join(ks_folders[0], "channel_map.npy"))
-    # channel_position = np.load(os.path.join(ks_folders[0], "channel_positions.npy"))
-    # start_idx = 0
-    # for ks_folder in ks_folders[1:]:
-    #     channel_map2 = np.load(os.path.join(ks_folder, "channel_map.npy"))
-    #     channel_position2 = np.load(os.path.join(ks_folder, "channel_positions.npy"))
-    #     if np.array_equal(channel_map, channel_map2) and np.array_equal(
-    #         channel_position, channel_position2
-    #     ):
-    #         break
-    #     start_idx += 1
-    #     channel_map = channel_map2
-    #     channel_position = channel_position2
-    # return ks_folders[start_idx:]
-
-
 def get_tracking_paths(probe_folders):
     mean_wf_paths = []
     metrics_paths = []
@@ -71,10 +23,10 @@ def get_tracking_paths(probe_folders):
 
     for ks_folder in probe_folders:
         # check if it is in KS directory
-        if os.path.exists(os.path.join(ks_folder, "RawWaveforms")):
-            mean_wf_paths.append(os.path.join(ks_folder, "RawWaveforms"))
-        else:
-            mean_wf_paths.append(os.path.join(ks_folder, "mean_waveforms.npy"))
+        # if os.path.exists(os.path.join(ks_folder, "RawWaveforms")):
+        #     mean_wf_paths.append(os.path.join(ks_folder, "RawWaveforms"))
+        # else:
+        mean_wf_paths.append(os.path.join(ks_folder, "mean_waveforms.npy"))
 
         if os.path.exists(os.path.join(ks_folder, "cilantro_metrics.tsv")):
             metrics_path = os.path.join(ks_folder, "cilantro_metrics.tsv")
@@ -150,29 +102,31 @@ def calc_average_waveforms(
     samples_after=62,
     sample_amount=1000,
     extract_good_units_only=False,
+    processing_drive="D:",
+    overwrite=False,
 ):
     spike_width = samples_before + samples_after
     half_width = np.floor(spike_width / 2).astype(int)
     max_width = np.floor(spike_width / 2).astype(int)
 
-    spike_ids, spike_times, good_units = erd.extract_KS_data(
+    spike_ids, spike_times, _ = erd.extract_KS_data(
         ks_folders, extract_good_units_only=extract_good_units_only
     )
     for sid, ks_folder in enumerate(ks_folders):
         # check if need to calculate
-        if os.path.exists(os.path.join(ks_folder, "RawWaveforms")):
-            continue
+        # if not overwrite and os.path.exists(os.path.join(ks_folder, "RawWaveforms")):
+        #     continue
 
         probe_folder = os.path.dirname(ks_folder)
-        # TODO
-        new_probe_folder = probe_folder.replace("Z:", "D:")
+        cur_drive = probe_folder.split(os.sep)[0]
+        new_probe_folder = probe_folder.replace(cur_drive, processing_drive)
         npx.copy_folder_with_progress(probe_folder, new_probe_folder)
-        ks_folder = ks_folder.replace("Z:", "D:")
+        ks_folder = ks_folder.replace(cur_drive, processing_drive)
 
         n_units = len(np.unique(spike_ids[sid]))
         params = npx.load_params(ks_folder)
-        data_path = npx.get_binary_path(ks_folder)
-        meta_path = npx.get_meta_path(ks_folder)
+        data_path = npx.get_binary_path(ks_folder, params)
+        meta_path = npx.get_meta_path(ks_folder, params)
 
         # load metadata
         meta_data = erd.read_meta(Path(meta_path))
@@ -226,6 +180,7 @@ def calc_average_waveforms(
                 for uid in range(n_units)
             )
             avg_waveforms = np.asarray(avg_waveforms)
+            # save all waveforms in a single file
         else:
             avg_waveforms = Parallel(
                 n_jobs=-1, verbose=10, mmap_mode="r", max_nbytes=None
@@ -242,27 +197,90 @@ def calc_average_waveforms(
             )
             avg_waveforms = np.asarray(avg_waveforms)
 
-        # TODO
         # Save in file named 'RawWaveforms' in the KS Directory
         erd.save_avg_waveforms(
             avg_waveforms,
-            ks_folder.replace("D:", "Z:"),
+            ks_folder.replace(processing_drive, cur_drive),
             good_units[sid],
             extract_good_units_only=extract_good_units_only,
         )
 
         del data
 
-        # TODO
-        shutil.rmtree(new_probe_folder)
+        # if cur_drive != processing_drive:
+        #     shutil.rmtree(new_probe_folder)
+
+
+def calc_mean_waveforms2(
+    ks_folder,
+    ks_version,
+    samples_before=20,
+    samples_after=62,
+    sample_amount=1000,
+    extract_good_units_only=False,
+    processing_drive="D:",
+    overwrite=False,
+):
+    probe_folder = os.path.dirname(ks_folder)
+    cur_drive = probe_folder.split(os.sep)[0]
+    new_probe_folder = probe_folder.replace(cur_drive, processing_drive)
+    npx.copy_folder_with_progress(probe_folder, new_probe_folder)
+    ks_folder = ks_folder.replace(cur_drive, processing_drive)
+
+    meta_path = npx.get_meta_path(ks_folder)
+    meta = npx.read_meta(meta_path)
+    spike_times = np.load(os.path.join(ks_folder, "spike_times.npy"))
+    spike_clusters = np.load(os.path.join(ks_folder, "spike_clusters.npy"))
+    cluster_ids = np.arange(np.max(spike_clusters) + 1)
+    n_clusters = len(cluster_ids)
+    n_channels = npx.get_ap_data_channel_count(meta) + 1 # TODO
+    data = npx.get_data_memmap(ks_folder)
+    times_multi = npx.find_times_multi(
+        spike_times, spike_clusters, cluster_ids, data, samples_before, samples_after
+    )
+
+    bits_to_uV = npx.get_bits_to_uV(meta)
+    bits_to_uV = cp.float32(bits_to_uV)  # convert to cupy float32
+    mean_wf = cp.zeros((n_clusters, n_channels, samples_before + samples_after, 2))
+
+    for i in tqdm(cluster_ids, desc="Calculating mean waveforms"):
+        spikes = npx.extract_spikes(
+            data,
+            times_multi,
+            i,
+            samples_before,
+            samples_after,
+            sample_amount,
+        )
+
+        if len(spikes) > 0:  # edge case
+            spikes_cp = cp.array(spikes, dtype=cp.float32)
+            # calc mean waveform of first and second half of spikes
+            mean_wf[i, :, :, 0] = cp.mean(spikes_cp[: len(spikes_cp) // 2], axis=0)
+            mean_wf[i, :, :, 1] = cp.mean(spikes_cp[len(spikes_cp) // 2 :], axis=0)
+
+    # convert mean_wf and std_wf to uV
+    mean_wf *= bits_to_uV
+
+    tqdm.write("Saving mean and std waveforms...")
+    cp.save(
+        os.path.join(
+            ks_folder.replace(processing_drive, cur_drive),
+            "RawWaveforms",
+            "AllUnits_Mean_RawSpikes.npy",
+        ),
+        mean_wf,
+    )
 
 
 if __name__ == "__main__":
     # Parameters
-    root_folder = "Z:\Psilocybin\Cohort_0"
+    root_folder = "Z:\Psilocybin\Cohort_1"
     ks_version = 4
     match_threshold = 0.75
-    subjects = None
+    subjects = "T11"
+    processing_drive = "D:"
+    save_matches = True
     tracking_params = default_params.get_default_param()
 
     # Subjects below root folder
@@ -272,6 +290,11 @@ if __name__ == "__main__":
             for f in os.listdir(root_folder)
             if os.path.isdir(os.path.join(root_folder, f))
         ]
+    else:
+        subject_folder = os.path.join(root_folder, subjects)
+        if not os.path.exists(subject_folder):
+            raise FileNotFoundError(f"Subject folder {subject_folder} not found")
+        subjects = [subject_folder]
 
     # get ks_folder for each probe
     pbar = tqdm(subjects, "Processing subjects...")
@@ -281,26 +304,33 @@ if __name__ == "__main__":
         ks_folders = npx.get_ks_folders(subject_folder, ks_version)
 
         # group folders by probes
-        all_probe_folders = get_probe_folders(ks_folders, catgt_only=True)
+        all_probe_folders = npx.get_probe_folders(ks_folders, catgt_only=True)
 
         pbar2 = tqdm(all_probe_folders, "Processing probes...", leave=False)
         for probe_num in pbar2:
             pbar2.set_description(f"Processing probe {probe_num}")
 
             # get kilosort folders with same channel positions
-            probe_folders = get_same_channel_positions(all_probe_folders[probe_num])
+            probe_folders = npx.get_same_channel_positions(all_probe_folders[probe_num])
             # sort assuming file name starts with date YYYYMMDD
             probe_folders.sort(key=lambda x: x.split(os.sep)[-2].split("_")[0])
 
-            output_path = os.path.join(subject_folder, f"UnitMatch_imec{probe_num}")
-            os.makedirs(output_path, exist_ok=True)
+            if save_matches:
+                output_path = os.path.join(subject_folder, f"UnitMatch_imec{probe_num}")
+                os.makedirs(output_path, exist_ok=True)
+            else:
+                output_path = None
 
             tracking_params["KS_dirs"] = probe_folders
 
             # create average waveforms if needed
-            calc_average_waveforms(
-                probe_folders, ks_version, extract_good_units_only=False
-            )
+            for probe_folder in probe_folders:
+                calc_mean_waveforms2(
+                    probe_folder,
+                    ks_version,
+                    extract_good_units_only=False,
+                    processing_drive=processing_drive,
+                )
 
             # setup to run tracking
             mean_wf_paths, metrics_path, channel_pos = get_tracking_paths(probe_folders)
@@ -343,4 +373,3 @@ if __name__ == "__main__":
                 probe_params,
                 save_dir=output_path,
             )
-

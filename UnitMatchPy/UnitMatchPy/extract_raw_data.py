@@ -185,8 +185,8 @@ def extract_a_unit_KS4(
         if start_idx < 0 or end_idx > len(data) or end_idx - start_idx < spike_width:
             continue
 
-        tmp = data[start_idx:end_idx, channels]  # -1, to better fit with ML
-        tmp = tmp.astype(np.float32)
+        tmp = data[start_idx:end_idx, channels]  # (spike_width, n_channels)
+        tmp = tmp.astype(np.float32) 
 
         # gaussian smooth, over time gaussian window = 5, sigma = window size / 5
         tmp = gaussian_filter(
@@ -211,7 +211,7 @@ def extract_a_unit_KS4(
         avg_waveforms[:, :, 1] = np.median(
             all_sample_waveforms[cv_lim:n_waves, :, :], axis=0
         )  # median over samples
-    return avg_waveforms
+    return avg_waveforms # (sample_amount, spike_width, n_channels, 2)
 
 
 def save_avg_waveforms(
@@ -243,6 +243,8 @@ def save_avg_waveforms(
         print(
             f"Saved {avg_waveforms.shape[0] + 1} units to RawWaveforms directory, saving all units"
         )
+        # save in just one file
+        np.save(os.path.join(tmp_path, "AllUnits_RawSpikes.npy"), avg_waveforms)
 
     # If only extracting GoodUnits
     else:
@@ -253,6 +255,7 @@ def save_avg_waveforms(
         print(
             f"Saved {good_units.shape[0] + 1} units to RawWaveforms directory, only saving good units"
         )
+        np.save(os.path.join(tmp_path, "GoodUnits_RawSpikes.npy"), avg_waveforms)
 
 
 # Load in necessary files from KS directory and raw data directory
