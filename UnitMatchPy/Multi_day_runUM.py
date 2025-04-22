@@ -44,12 +44,14 @@ from UnitMatchPy.estimate_fp import estFP_vs_matchfrac, est_matchfrac, thresh_fo
 
 def main():
     
-    ks_parent = r'Z:\cagatay\MB110_out\results'
-    out_parent = r'Z:\cagatay\MB110_out\results\UM_manual_drift'
+    ks_parent = r"Z:\Psilocybin\tracking_test"
+    out_parent = r"Z:\Psilocybin\tracking_test\UM"
     
-    rec_list = ['200427_MB110_H0_R0_g0',
-                '200428_MB110_H0_R0_g0',
-                '200501_MB110_H0_R0_g0'
+    rec_list = ['catgt_20241021_T09_OF_Hab_g0',
+                'catgt_20241022_T09_OF_Test1_g0',
+                'catgt_20241023_T09_OF_Test2_g0'
+                'catgt_20241024_T09_OF_Test3_g0',
+                'catgt_20241025_T09_OF_Test4_g0'
                 ]
     
     # Estimates of drift bewteen sessions; coordinates = [distance from shank, x, z]

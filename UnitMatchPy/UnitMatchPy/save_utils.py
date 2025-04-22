@@ -177,7 +177,7 @@ def save_to_output(save_dir, scores_to_include, matches, output_prob, avg_centro
     waveform_info_path = os.path.join(save_dir, 'WaveformInfo')
     np.savez(waveform_info_path, **waveform_info)
 
-    #save automatuc matches
+    #save automatic matches
     matches_path = os.path.join(save_dir, 'Matches')
     np.save(matches_path, matches)
 

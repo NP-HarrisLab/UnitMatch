@@ -1,3 +1,5 @@
+from itertools import combinations
+
 import numpy as np
 
 import UnitMatchPy.param_functions as pf
@@ -386,18 +388,16 @@ def dist_angle(avg_waveform_per_tp_flip, param):
     good_angle[traj_dist >= min_angle_dist] = 1
 
     count_id = 0
-    for dim_id1 in range(avg_waveform_per_tp_flip.shape[0]):
-        for dim_id2 in np.arange(1, avg_waveform_per_tp_flip.shape[0]):
-            if dim_id2 <= dim_id1:
-                continue
-            ang = np.abs(x1[dim_id1, :, :, :, :] - x2[dim_id1, :, :, :, :]) / np.abs(
-                x1[dim_id2, :, :, :, :] - x2[dim_id2, :, :, :, :]
-            )
+    n_dims = avg_waveform_per_tp_flip.shape[0]
+    for dim_id1, dim_id2 in combinations(range(n_dims), 2):
+        ang = np.abs(x1[dim_id1, :, :, :, :] - x2[dim_id1, :, :, :, :]) / np.abs(
+            x1[dim_id2, :, :, :, :] - x2[dim_id2, :, :, :, :]
+        )
 
-            loc_angle[:, :, :, :, count_id] = (
-                np.arctan(ang) * good_angle
-            )  # only selects angles for units where there is sufficient distance between time poitns
-            count_id += 1
+        loc_angle[:, :, :, :, count_id] = (
+            np.arctan(ang) * good_angle
+        )  # only selects angles for units where there is sufficient distance between time poitns
+        count_id += 1
 
     loc_angle = np.nansum(loc_angle, axis=4)
     x1 = np.tile(np.expand_dims(loc_angle[:, :, 0, :], axis=-1), (1, 1, 1, n_units))
@@ -616,7 +616,15 @@ def drift_correction_basic(
 
     return drift, avg_centroid, avg_waveform_per_tp
 
-def apply_drift_correction_basic(pairs, sid, session_switch, avg_centroid, avg_waveform_per_tp, est_drift=np.asarray([])):
+
+def apply_drift_correction_basic(
+    pairs,
+    sid,
+    session_switch,
+    avg_centroid,
+    avg_waveform_per_tp,
+    est_drift=np.asarray([]),
+):
     """
     This function applies the basic style drift correction to a pair of sessions, as part of a n_session drift correction
 
@@ -642,14 +650,23 @@ def apply_drift_correction_basic(pairs, sid, session_switch, avg_centroid, avg_w
     if est_drift.size > 0:
         drift = est_drift
     else:
-        drift = np.nanmedian( np.nanmean( avg_centroid[:, pairs[:,0],:], axis = 2) - np.nanmean( avg_centroid[:,pairs[:,1],:], axis = 2), axis = 1)
-
+        drift = np.nanmedian(
+            np.nanmean(avg_centroid[:, pairs[:, 0], :], axis=2)
+            - np.nanmean(avg_centroid[:, pairs[:, 1], :], axis=2),
+            axis=1,
+        )
 
     ##need to add the drift to the location
     ##Note: session_switch[sid+1]:session_switch[sid+2] are the units in session sid+1
-    avg_waveform_per_tp[0,session_switch[sid+1]:session_switch[sid+2],:,:] += drift[0]
-    avg_waveform_per_tp[1,session_switch[sid+1]:session_switch[sid+2],:,:] += drift[1]
-    avg_waveform_per_tp[2,session_switch[sid+1]:session_switch[sid+2],:,:] += drift[2]
+    avg_waveform_per_tp[
+        0, session_switch[sid + 1] : session_switch[sid + 2], :, :
+    ] += drift[0]
+    avg_waveform_per_tp[
+        1, session_switch[sid + 1] : session_switch[sid + 2], :, :
+    ] += drift[1]
+    avg_waveform_per_tp[
+        2, session_switch[sid + 1] : session_switch[sid + 2], :, :
+    ] += drift[2]
 
     avg_centroid[0, session_switch[sid + 1] : session_switch[sid + 2], :] += drift[0]
     avg_centroid[1, session_switch[sid + 1] : session_switch[sid + 2], :] += drift[1]
@@ -913,15 +930,33 @@ def drift_n_sessions(
         if best_match == True:
             pairs = get_good_matches(pairs, total_score)
 
-            #Test to see if there are enough matches to do drift correction per shank
-            if test_matches_per_shank(pairs, avg_centroid, did, param) == True and best_drift == True:
-                drifts = np.zeros( (n_sessions - 1, param['no_shanks'], 3))
-                drifts[did,:,:], avg_waveform_per_tp, avg_centroid = apply_drift_correction_per_shank(pairs, did, session_switch, avg_centroid, avg_waveform_per_tp, param)
-                print(f'Done drift correction per shank for session pair {did+1} and {did+2}')
-            elif len(pairs)>0: #if there exist pairs across sessions:                
-                drifts[did,:], avg_waveform_per_tp, avg_centroid = apply_drift_correction_basic(pairs, did, session_switch, avg_centroid, avg_waveform_per_tp)
-            elif len(pairs)==0:
-                print('No pairs across sessions to perform drift correction.')
+            # Test to see if there are enough matches to do drift correction per shank
+            if (
+                test_matches_per_shank(pairs, avg_centroid, did, param) == True
+                and best_drift == True
+            ):
+                drifts = np.zeros((n_sessions - 1, param["no_shanks"], 3))
+                drifts[did, :, :], avg_waveform_per_tp, avg_centroid = (
+                    apply_drift_correction_per_shank(
+                        pairs,
+                        did,
+                        session_switch,
+                        avg_centroid,
+                        avg_waveform_per_tp,
+                        param,
+                    )
+                )
+                print(
+                    f"Done drift correction per shank for session pair {did+1} and {did+2}"
+                )
+            elif len(pairs) > 0:  # if there exist pairs across sessions:
+                drifts[did, :], avg_waveform_per_tp, avg_centroid = (
+                    apply_drift_correction_basic(
+                        pairs, did, session_switch, avg_centroid, avg_waveform_per_tp
+                    )
+                )
+            elif len(pairs) == 0:
+                print("No pairs across sessions to perform drift correction.")
     return drifts, avg_centroid, avg_waveform_per_tp
 
 
