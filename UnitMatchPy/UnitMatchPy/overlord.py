@@ -163,6 +163,7 @@ def extract_metric_scores(
         session_switch,
         avg_centroid,
         avg_waveform_per_tp,
+        extracted_wave_properties["max_site_mean"],
         total_score,
         param,
     )

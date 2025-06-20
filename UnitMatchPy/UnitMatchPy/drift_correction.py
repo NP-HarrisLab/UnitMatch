@@ -1,145 +1,275 @@
+import datetime
+import json
 import os
+import shutil
 
 import npx_utils as npx
 import numpy as np
-from cilantropy.curation import Curator
-from dredge import dredge_ap, motion_util
+import spikeinterface.full as si
 from matplotlib import pyplot as plt
-from tqdm import tqdm
+from tqdm.auto import tqdm
 
 
-def get_shank_channel_idxs(channel_pos, shank_idx=None):
-    #     channel_pos = np.load(os.path.join(ks_folders[0], "channel_positions.npy"))
-    # channel_idxs = get_shank_channel_idxs(channel_pos, shank_choice)
+def _get_combined_recording(folder1, folder2, stream, duration_s):
+    rec1 = si.read_spikeglx(folder_path=folder1, stream_id=stream)
+    rec2 = si.read_spikeglx(folder_path=folder2, stream_id=stream)
 
-    #  conc_data = []
-    # conc_z_score = []
-    # for ks_folder in tqdm(ks_folders):
-    #     data = npx.get_data_memmap(ks_folder)
-    #     shank_data = data[:, channel_idxs, :]
-    #     # slice central snippet of data
-    #     shank_data = shank_data[
-    #         :,
-    #         :,
-    #         int(data.shape[2] / 2 - snip_length / 2) : int(
-    #             data.shape[2] / 2 + snip_length / 2
-    #         ),
-    #     ]
-    #     z_score = (shank_data - np.mean(shank_data, axis=2)) / np.std(
-    #         shank_data, axis=2
-    #     )
-    #     conc_data.append(shank_data)
-    #     conc_z_score.append(z_score)
-    #     conc_data = np.concatenate(conc_data, axis=0)
-    # conc_z_score = np.concatenate(conc_z_score, axis=0)
-    # # save to disk
-    # os.makedirs(save_dir, exist_ok=True)
-    # np.save(
-    #     os.path.join(save_dir, "chronic_data.npy"),
-    #     conc_data,
-    #     allow_pickle=False,
-    # )
-    # np.save(
-    #     os.path.join(save_dir, "chronic_z_score.npy"),
-    #     conc_z_score,
-    #     allow_pickle=False,
-    # )
-    shank_cutoffs = [0, 168, 418, 668, 918]
-    if shank_idx is not None:
-        channel_idxs = np.where(
-            (channel_pos[:, 0] > shank_cutoffs[shank_idx])
-            & (channel_pos[:, 0] < shank_cutoffs[shank_idx + 1])
-        )[0]
-    else:
-        max_count = -1
-        best_channel_idxs = None
-        for i in range(4):
-            idxs = np.where(
-                (channel_pos[:, 0] > shank_cutoffs[i])
-                & (channel_pos[:, 0] < shank_cutoffs[i + 1])
-            )[0]
-            if len(idxs) > max_count:
-                max_count = len(idxs)
-                best_channel_idxs = idxs
-        channel_idxs = best_channel_idxs
-    if channel_idxs is None or len(channel_idxs) == 0:
-        raise ValueError(f"No channels on shank {shank_idx}")
-    return channel_idxs
+    # check channel positions are same
+    if not np.array_equal(rec1.get_channel_locations(), rec2.get_channel_locations()):
+        raise ValueError("Channel locations do not match between recordings")
+    rec1_end = rec1.time_slice(
+        start_time=rec1.get_total_duration() - duration_s,
+        end_time=rec1.get_total_duration(),
+    )
+    rec2_start = rec2.time_slice(
+        start_time=rec2.get_start_time(),
+        end_time=rec2.get_start_time() + duration_s,
+    )
+
+    rec = si.concatenate_recordings([rec1_end, rec2_start])
+    rec = rec.astype("float32")
+    return rec
 
 
-def chronic_drift_correction(ks_folders, shank_choice=None, snip_length=600):
-    all_amps = []
-    all_depths = []
-    all_times = []
-    start_times = []
-    bin_size = snip_length / 30000  # 30 kHz
-    for i, ks_folder in tqdm(enumerate(ks_folders), "Extracting drift data..."):
-        curator = Curator(ks_folder)
-        n_samples = curator.raw_data.data.shape[0]
-        start_sample = n_samples // 2 - snip_length // 2
-        end_sample = n_samples // 2 + snip_length // 2
-        probe_amps = []
-        probe_depths = []
-        probe_times = []
-        start_time = i * bin_size
-        good_ids = (
-            curator.cluster_metrics["label"].isin(["good", "mua"]).index.to_list()
+def _calc_mean_displacement(motion, drift_folder):
+    middle = motion.displacement[0].shape[0] // 2
+    before = motion.displacement[0][:middle].mean(axis=0)
+    after = motion.displacement[0][middle:].mean(axis=0)
+    displacement = after - before
+    if drift_folder is not None:
+        np.save(
+            os.path.join(drift_folder, "motion", "mean_displacement.npy"), displacement
         )
+    return displacement
 
-        for unit_id in good_ids:
-            spike_times = curator.times_multi[unit_id]
-            mask = (spike_times >= start_sample) & (spike_times <= end_sample)
-            filtered_times = spike_times[mask] / curator.params["sample_rate"]
-            filtered_times -= start_sample / curator.params["sample_rate"]
-            filtered_times += start_time
-            if len(filtered_times) == 0:
+
+def _calc_channels(motion, motion_info, rec, drift_folder):
+    win_size = motion_info["parameters"]["estimate_motion_kwargs"]["win_step_um"]
+    z_loc = rec.get_channel_locations()[:, 1]
+    starts = motion.spatial_bins_um - win_size / 2
+    ends = motion.spatial_bins_um + win_size / 2
+    # ensure cover the full range
+    starts[0] = z_loc.min()
+    ends[-1] = z_loc.max()
+    bounds = np.stack([starts, ends], axis=1)
+    channels = []
+    for start, end in bounds:
+        mask = (z_loc >= start) & (z_loc <= end)
+        channels.append(np.where(mask)[0])
+    if drift_folder is not None:
+        np.save(os.path.join(drift_folder, "motion", "spatial_bounds_um.npy"), bounds)
+        np.savez(os.path.join(drift_folder, "motion", "channels.npz"), *channels)
+    return channels
+
+
+def estimate_drift(
+    run_folders,
+    probe_ids=None,
+    duration_s=5 * 60,
+    save_path=None,
+    overwrite=False,
+    plot=False,
+    rigid=False,
+):
+    """
+    Estimate drift between pairs of recordings and save the results.
+    Parameters:
+        run_folders (list): List of folders containing the recordings.
+        probe_ids (list or None): List of probe IDs to process. If None, all probes are processed.
+        duration_s (int): Duration in seconds to consider for drift estimation.
+        save_path (str or None): Path to save the results. If None, results are not saved.
+        overwrite (bool): Whether to overwrite existing results.
+        plot (bool): Whether to plot the results.
+        rigid (bool): Whether to use rigid motion estimation.
+    Returns:
+        all_displacements (np.ndarray): Array of displacements for each pair of recordings per probe. (# probes, # run_folders - 1, # segments). # segments is 1 if rigid, 7 otherwise.
+        channels (list): Channel ids associated with each displacement per probe, if rigid then will be all channels.
+    """
+    # get probe_ids if not provided
+    if probe_ids is None:
+        # get folders in run_folders
+        probe_ids = [
+            int(folder.split("imec")[-1])
+            for folder in os.listdir(run_folders[0])
+            if ("imec" in folder)
+            and os.path.isdir(os.path.join(run_folders[0], folder))
+        ]
+
+    if save_path is not None:
+        os.makedirs(save_path, exist_ok=True)
+
+    job_kwargs = dict(chunk_duration="1s", n_jobs=10, progress_bar=True)
+
+    all_displacements = [np.array([], dtype=np.float32)] * len(probe_ids)
+    channels = [[]] * len(probe_ids)
+
+    # loop through probe_ids
+    for i, probe_id in tqdm(
+        enumerate(probe_ids), desc="Processing probes", unit="probe"
+    ):
+        stream = f"imec{probe_id}.ap"
+
+        if (
+            not overwrite
+            and (save_path is not None)
+            and os.path.exists(
+                os.path.join(save_path, f"imec{probe_id}", "params.json")
+            )
+        ):
+            with open(
+                os.path.join(save_path, f"imec{probe_id}", "params.json"), "r"
+            ) as f:
+                params = json.load(f)
+            if (
+                params["folders"] == run_folders
+                and params["duration_s"] == duration_s
+                and params["drift_type"] == "dredge"
+                and params["rigid"] == rigid
+            ):
+                tqdm.write(f"Probe {probe_id} already processed, loading data.")
+                # load existing displacements and channels
+                all_displacements[i] = np.load(
+                    os.path.join(save_path, f"imec{probe_id}", "all_displacements.npy")
+                )
+                probe_channels_npz = np.load(
+                    os.path.join(save_path, f"imec{probe_id}", "channels.npz")
+                )
+                probe_channels = list(probe_channels_npz.values())
+                channels[i] = probe_channels
                 continue
-            filtered_idxs = np.where(mask)[0]
-            # TODO extract spikes
-            spikes = curator.spikes[unit_id][filtered_idxs, :, :]
-            amps = np.ptp(spikes, axis=2)
-            peaks = np.argmax(amps, axis=1)
-            depths = curator.channel_pos[peaks, 1]
 
-            probe_amps.append(amps)
-            probe_depths.append(depths)
-            probe_times.append(filtered_times)
+        if save_path is not None:
+            probe_path = os.path.join(save_path, f"imec{probe_id}")
+            os.makedirs(probe_path, exist_ok=True)
+        # loop through pairs of folders
+        for j in tqdm(
+            range(len(run_folders) - 1), desc="Estimating drift", unit="pair"
+        ):
+            # get recordings
+            folder1 = run_folders[j]
+            folder2 = run_folders[j + 1]
+            rec = _get_combined_recording(folder1, folder2, stream, duration_s)
 
-        all_amps.append(probe_amps)
-        all_depths.append(probe_depths)
-        all_times.append(probe_times)
-        start_times.append(start_time)
+            drift_folder = (
+                os.path.join(probe_path, f"pair_{j}_{j + 1}")
+                if save_path is not None
+                else None
+            )
+            if drift_folder is not None and os.path.exists(drift_folder):
+                shutil.rmtree(drift_folder)
 
-    all_amps = np.concatenate(all_amps, axis=0)
-    all_depths = np.concatenate(all_depths, axis=0)
-    all_times = np.concatenate(all_times, axis=0)
+            estimate_motion_kwargs = dict(
+                method="dredge_ap",
+                direction="y",
+                rigid=rigid,
+                win_shape="gaussian",
+                win_step_um=400.0,
+                win_scale_um=400.0,
+                win_margin_um=None,
+            )
 
-    motion_est, extra = dredge_ap.register(
-        all_amps, all_depths, all_times, rigid=True, bin_s=bin_size, device="cuda"
+            motion, motion_info = si.compute_motion(
+                rec,
+                preset="dredge",
+                output_motion_info=True,
+                folder=drift_folder,
+                overwrite=overwrite,
+                estimate_motion_kwargs=estimate_motion_kwargs,
+                **job_kwargs,
+            )
+            displacement = _calc_mean_displacement(motion, drift_folder)
+            probe_channels = _calc_channels(motion, motion_info, rec, drift_folder)
+
+            if all_displacements[i].size == 0:
+                all_displacements[i] = np.zeros(
+                    (len(run_folders) - 1, displacement.shape[0]), dtype=np.float32
+                )
+            all_displacements[i][j, :] = displacement
+            channels[i] = probe_channels
+            if plot:
+                fig = plt.figure(figsize=(15, 10))
+                si.plot_motion_info(motion_info, rec, figure=fig, color_amplitude=True)
+
+        # save displacements from this probe
+        np.save(
+            os.path.join(probe_path, "all_displacements.npy"),
+            all_displacements[i],
+        )
+        np.savez(os.path.join(probe_path, "channels.npz"), *channels[i])
+        params = {
+            "folders": run_folders,
+            "duration_s": duration_s,
+            "drift_type": "dredge",
+            "rigid": False,
+            "time": datetime.datetime.now().strftime("%I:%M%p on %B %d, %Y"),
+        }
+        with open(os.path.join(probe_path, "params.json"), "w") as f:
+            json.dump(params, f, indent=4)
+    return all_displacements, channels
+
+
+if __name__ == "__main__":
+    subject_folder = r"D:\Psilocybin\Cohort_2b\T17"
+    overwrite = False
+    probe_ids = None
+    duration_s = 5 * 60
+    plot = False
+    rigid = False
+
+    save_path = os.path.join(subject_folder, "drift")
+    if rigid:
+        save_path += "_rigid"
+    day_folders = [
+        os.path.join(subject_folder, folder)
+        for folder in os.listdir(subject_folder)
+        if os.path.isdir(os.path.join(subject_folder, folder))
+        and ("SvyPrb" not in folder)
+        and ("old" not in folder)
+    ]
+    run_folders = []
+    for day_folder in day_folders:
+        possible_run_folders = [
+            os.path.join(day_folder, folder)
+            for folder in os.listdir(day_folder)
+            if npx.is_run_folder(folder)
+        ]
+        # find one with supercat
+        supercat_folders = [
+            folder for folder in possible_run_folders if "supercat" in folder
+        ]
+        if len(supercat_folders) > 1:
+            raise ValueError(
+                f"Multiple supercat folders found in {day_folder}: {supercat_folders}"
+            )
+        if len(supercat_folders) == 1:
+            run_folders.append(supercat_folders[0])
+        else:
+            # find catgt folders
+            catgt_folders = [
+                folder for folder in possible_run_folders if "catgt" in folder
+            ]
+            if len(catgt_folders) > 1:
+                raise ValueError(
+                    f"Multiple catgt folders found in {day_folder}: {catgt_folders}"
+                )
+            if len(catgt_folders) == 1:
+                run_folders.append(catgt_folders[0])
+            else:
+                if len(possible_run_folders) == 1:
+                    run_folders.append(possible_run_folders[0])
+                elif len(possible_run_folders) == 0:
+                    continue
+                else:
+                    raise ValueError(
+                        f"Multiple run folders found in {day_folder}: {possible_run_folders}"
+                    )
+    run_folders.sort()
+    all_displacements, channels = estimate_drift(
+        run_folders,
+        probe_ids=probe_ids,
+        duration_s=duration_s,
+        save_path=save_path,
+        overwrite=overwrite,
+        plot=plot,
+        rigid=rigid,
     )
-    depths = motion_est.correct_s(all_times, all_depths)
-
-    fig, ax = plt.subplots()
-    scatter = ax.scatter(
-        all_times.flatten(), all_depths.flatten(), s=1, c="k", alpha=0.5, label="raw"
-    )
-    plt.colorbar(scatter, ax=ax, shrink=0.25, label="depth (um)")
-    lines = motion_util.plot_me_traces(motion_est, ax=ax, color="r")
-    ax.set_xlabel("Time (s)")
-    ax.set_ylabel("Depth (um)")
-    ax.set_title("Drift correction")
-    ax.legend([lines[0]], ["motion estimate"], loc="lower right")
-
-
-def lfp_drift_visualization(ks_folder, shank_choice, t_start, t_end):
-    channel_pos = os.path.join(ks_folder, "channel_positions.npy")
-    lfp = npx.get_lfp_memmap(ks_folder)
-
-
-# lfp_drift_visualization(ks_folder,)
-ks_folders = [
-    r"D:\tracking_test\catgt_20241021_T09_OF_Hab_g0\20241021_T09_OF_Hab_g0_imec0\imec0_ks4",
-    r"D:\tracking_test\catgt_20241022_T09_OF_Test1_g0\20241022_T09_OF_Test1_g0_imec0\imec0_ks4",
-    r"D:\tracking_test\catgt_20241022_T09_OF_Test1_g0\20241022_T09_OF_Test1_g0_imec0\imec0_ks4",
-]
-chronic_drift_correction(ks_folders)

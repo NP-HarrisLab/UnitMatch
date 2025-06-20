@@ -623,7 +623,9 @@ def apply_drift_correction_basic(
     session_switch,
     avg_centroid,
     avg_waveform_per_tp,
+    max_site,
     est_drift=np.asarray([]),
+    drift_channels=[np.arange(384)],
 ):
     """
     This function applies the basic style drift correction to a pair of sessions, as part of a n_session drift correction
@@ -640,8 +642,11 @@ def apply_drift_correction_basic(
         The average centroid for each unit
     avg_waveform_per_tp : ndarray
         The average waveform per time point for each unit
+    max_site: ndarray
+        The maximum site for each unit.
     est_drift : empty or drfit estimate from a source other than the incoming pairs (e.g. DREDGE), for the incoming pair of sessions
-
+        (num_segments, 3). May be (3,) if rigid drift.
+    drift_channels: list of num_segments long with channel associated with each drift segment
     Returns
     -------
     ndarray, ndarray, ndarray
@@ -655,22 +660,27 @@ def apply_drift_correction_basic(
             - np.nanmean(avg_centroid[:, pairs[:, 1], :], axis=2),
             axis=1,
         )
+        drift_channels = [np.arange(384)]
+    if drift.ndim == 1:
+        drift = np.expand_dims(drift, axis=0)
+    assert drift.shape[0] == len(drift_channels)
+    assert drift.shape[1] == 3, "Drift should be a 3D"
+
+    channel_to_segment_map = np.full(385, -1, dtype=int)
+    for seg_idx, channels_in_seg in enumerate(drift_channels):
+        channel_to_segment_map[channels_in_seg] = seg_idx
+    segment_idx = channel_to_segment_map[max_site[session_switch[sid + 1] : session_switch[sid + 2]]]
+    unit_drift = drift[segment_idx, :]
+    # transpose and add new_dims so can do drift correction with waveform shape
+    unit_drift = unit_drift.T
 
     ##need to add the drift to the location
     ##Note: session_switch[sid+1]:session_switch[sid+2] are the units in session sid+1
     avg_waveform_per_tp[
-        0, session_switch[sid + 1] : session_switch[sid + 2], :, :
-    ] += drift[0]
-    avg_waveform_per_tp[
-        1, session_switch[sid + 1] : session_switch[sid + 2], :, :
-    ] += drift[1]
-    avg_waveform_per_tp[
-        2, session_switch[sid + 1] : session_switch[sid + 2], :, :
-    ] += drift[2]
+        :, session_switch[sid + 1] : session_switch[sid + 2], :, :
+    ] += np.expand_dims(unit_drift, axis=(2, 3))
 
-    avg_centroid[0, session_switch[sid + 1] : session_switch[sid + 2], :] += drift[0]
-    avg_centroid[1, session_switch[sid + 1] : session_switch[sid + 2], :] += drift[1]
-    avg_centroid[2, session_switch[sid + 1] : session_switch[sid + 2], :] += drift[2]
+    avg_centroid[:, session_switch[sid + 1] : session_switch[sid + 2], :] += np.expand_dims(unit_drift, axis=2)
 
     return drift, avg_waveform_per_tp, avg_centroid
 
@@ -872,6 +882,7 @@ def drift_n_sessions(
     session_switch,
     avg_centroid,
     avg_waveform_per_tp,
+    max_site,
     total_score,
     param,
     best_match=True,
@@ -893,6 +904,8 @@ def drift_n_sessions(
         The average centroid for each unit
     avg_waveform_per_tp : ndarray
         The average waveform per time point for each unit
+    max_site : ndarray
+        The maximum site for each unit, used to determine the shank of the unit
     total_score : ndarray
         The summed array for each individual metric
     param : dict
@@ -952,7 +965,7 @@ def drift_n_sessions(
             elif len(pairs) > 0:  # if there exist pairs across sessions:
                 drifts[did, :], avg_waveform_per_tp, avg_centroid = (
                     apply_drift_correction_basic(
-                        pairs, did, session_switch, avg_centroid, avg_waveform_per_tp
+                        pairs, did, session_switch, avg_centroid, avg_waveform_per_tp, max_site
                     )
                 )
             elif len(pairs) == 0:

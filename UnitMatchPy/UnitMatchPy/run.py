@@ -21,11 +21,12 @@ def unit_match(
     n_splits,
     save_dir=None,
     est_drift=np.asarray([]),
+    drift_channels=[],
 ):
     # extract waveforms properties
     extracted_wave_properties = ov.extract_parameters(
         mean_wf, channel_pos, clus_info, params
-    )
+    )    
 
     # if est_drift is not all zeros or empty, apply drift correction to all session, then re-calculate metrics
     # each session needs to be corrected to match the first session -- so sum over the drift estimates
@@ -33,16 +34,31 @@ def unit_match(
     n_sess = len(params["KS_dirs"])
     if np.any(est_drift):
         for i in range(n_sess - 1):
-            curr_drift = np.sum(est_drift[0 : i + 1, :], axis=0)
+            curr_drift = np.sum(est_drift[0 : i + 1], axis=0)
             print(curr_drift)
-            drifts, avg_waveform_per_tp, avg_centroid = mf.apply_drift_correction_basic(
-                None, i, session_switch, avg_centroid, avg_waveform_per_tp, curr_drift
+            (
+                drift,
+                extracted_wave_properties["avg_waveform_per_tp"],
+                extracted_wave_properties["avg_centroid"],
+            ) = mf.apply_drift_correction_basic(
+                None,
+                i,
+                session_switch,
+                extracted_wave_properties["avg_centroid"],
+                extracted_wave_properties["avg_waveform_per_tp"],
+                extracted_wave_properties["max_site_mean"],
+                curr_drift,
+                drift_channels,
             )
 
     # calculate metric scores from waveform properties. Estimate drift and correct for this.
     total_score, candidate_pairs, scores_to_include, predictors, drifts = (
         ov.extract_metric_scores(
-            extracted_wave_properties, session_switch, within_session, params, n_splits=n_splits
+            extracted_wave_properties,
+            session_switch,
+            within_session,
+            params,
+            n_splits=n_splits,
         )
     )
 
@@ -59,12 +75,12 @@ def unit_match(
     parameter_kernels = np.full(
         (len(score_vector), len(scores_to_include), len(cond)), np.nan
     )
-    np.save(os.path.join(save_dir, "score_vector.npy"), params["score_vector"])
-    np.save(os.path.join(save_dir, "parameter_kernels.npy"), parameter_kernels)
 
     parameter_kernels = bf.get_parameter_kernels(
         scores_to_include, labels, cond, params, add_one=1
     )
+    np.save(os.path.join(save_dir, "score_vector.npy"), params["score_vector"])
+    np.save(os.path.join(save_dir, "parameter_kernels.npy"), parameter_kernels)
 
     # get probability of each pair of being a match
     probability = bf.apply_naive_bayes(
