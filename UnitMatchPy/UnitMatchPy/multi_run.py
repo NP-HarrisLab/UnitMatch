@@ -17,12 +17,7 @@ from UnitMatchPy.cross_sess_sum import (
 )
 from UnitMatchPy.estimate_fp import est_matchfrac, estFP_vs_matchfrac, thresh_for_FP
 from UnitMatchPy.run import unit_match
-from UnitMatchPy.utils import (
-    get_probe_geometry,
-    get_session_data,
-    get_within_session,
-    load_good_waveforms,
-)
+from UnitMatchPy.utils import get_probe_geometry, get_session_data, get_within_session
 
 
 def get_tracking_paths(probe_folders, n_splits):
@@ -243,17 +238,18 @@ if __name__ == "__main__":
     #     r"D:\Psilocybin\Cohort_2b\T16\20250525_T16_day1\catgt_20250525_T16_day1_g0",
     #     r"D:\Psilocybin\Cohort_2b\T16\20250603_T16_day10\catgt_20250603_T16_day10_g0",
     # ]
-    subject_folder = r"D:\Psilocybin\Cohort_2b\Madison"
+    subject_folder = r"D:\Psilocybin\Cohort_2b\T17"
     displacement_path = os.path.join(subject_folder, "drift")
-    save_dir = r"D:\Psilocybin\Cohort_2b\T16\UnitMatch_AvgWf"
+    save_dir = os.path.join(subject_folder, "UnitMatch")
     ks_version = "4"
-    match_threshold = 0.5  # TODO 0.75?
+    match_threshold = 0.5
     processing_drive = "D:"
     tracking_params = default_params.get_default_param()
     good_lbls = ["good"]
     fp_max = 0.02
     n_splits = 2
     probe_ids = None
+    run_gui = False
 
     day_folders = [
         os.path.join(subject_folder, folder)
@@ -391,6 +387,7 @@ if __name__ == "__main__":
             match_threshold,
             probe_params,
             n_splits,
+            run_gui,
             save_dir=probe_save_dir,
             est_drift=drift_est_all,
             drift_channels=drift_channels,
@@ -418,3 +415,7 @@ if __name__ == "__main__":
         cross_sum_df.to_csv(
             os.path.join(probe_save_dir, "cross_sum_df.csv"), index=None
         )
+        # save ks_folders
+        with open(os.path.join(probe_save_dir, "ks_folders.txt"), "w") as f:
+            for ks_folder in probe_folders:
+                f.write(ks_folder + "\n")

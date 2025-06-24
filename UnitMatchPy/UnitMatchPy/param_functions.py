@@ -315,7 +315,7 @@ def get_amplitude_shift_waveform(waveform, avg_waveform, peak_time, param):
     ----------
     waveform : ndarray (n_units, spike_width, n_channels, cv)
         The waveforms for each unit and cv
-    avg_waveform : ndarray (n_units, spike_width, cv)
+    avg_waveform : ndarray (spike_width, n_units, cv)
         The weighted average waveform over channels
     peak_time : ndarray
         The peak time for each waveform

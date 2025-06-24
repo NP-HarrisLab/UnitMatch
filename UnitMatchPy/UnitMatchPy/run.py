@@ -4,6 +4,7 @@ import numpy as np
 
 import UnitMatchPy.assign_unique_id as aid
 import UnitMatchPy.bayes_functions as bf
+import UnitMatchPy.GUI as gui
 import UnitMatchPy.metric_functions as mf
 import UnitMatchPy.overlord as ov
 import UnitMatchPy.save_utils as su
@@ -19,6 +20,7 @@ def unit_match(
     match_threshold,
     params,
     n_splits,
+    run_gui=False,
     save_dir=None,
     est_drift=np.asarray([]),
     drift_channels=[],
@@ -26,7 +28,7 @@ def unit_match(
     # extract waveforms properties
     extracted_wave_properties = ov.extract_parameters(
         mean_wf, channel_pos, clus_info, params
-    )    
+    )
 
     # if est_drift is not all zeros or empty, apply drift correction to all session, then re-calculate metrics
     # each session needs to be corrected to match the first session -- so sum over the drift estimates
@@ -100,6 +102,32 @@ def unit_match(
     output_threshold = np.zeros_like(output_prob_matrix)
     output_threshold[output_prob_matrix > match_threshold] = 1
 
+    if run_gui:
+        gui.process_info_for_GUI(
+            output_prob_matrix,
+            match_threshold,
+            scores_to_include,
+            total_score,
+            extracted_wave_properties["amplitude"],
+            extracted_wave_properties["spatial_decay"],
+            extracted_wave_properties["avg_centroid"],
+            extracted_wave_properties["avg_waveform"],
+            extracted_wave_properties["avg_waveform_per_tp"],
+            extracted_wave_properties["good_wave_idxs"],
+            extracted_wave_properties["max_site"],
+            extracted_wave_properties["max_site_mean"],
+            mean_wf,
+            within_session,
+            channel_pos,
+            clus_info,
+            params,
+        )
+        is_match, not_match, matches_GUI = gui.run_GUI()
+        matches_curated = utils.curate_matches(
+            matches_GUI, is_match, not_match, mode="AND"
+        )
+    else:
+        matches_curated = None
     matches = np.argwhere(((output_threshold * within_session)) == True)
 
     # plt.imshow(output_threshold, cmap="Greys")
@@ -123,7 +151,7 @@ def unit_match(
             clus_info,
             params,
             UIDs=UIDs,
-            matches_curated=None,
+            matches_curated=matches_curated,
             save_match_table=True,
         )
 

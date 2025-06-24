@@ -209,7 +209,7 @@ def estimate_drift(
 
 
 if __name__ == "__main__":
-    subject_folder = r"D:\Psilocybin\Cohort_2b\T17"
+    subject_folder = r"D:\Psilocybin\Cohort_2b\Monroe"
     overwrite = False
     probe_ids = None
     duration_s = 5 * 60
