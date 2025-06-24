@@ -73,7 +73,7 @@ def apply_naive_bayes(parameter_kernels, priors, predictors, param, cond):
     ndarray
         The probability the unit is or is not a match
     """
-    print('Calculating the match probabilities')
+    #print('Calculating the match probabilities')
     
     score_vector = param['score_vector']
     n_pairs = predictors.shape[0] ** 2
