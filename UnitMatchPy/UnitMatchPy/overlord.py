@@ -192,7 +192,7 @@ def extract_metric_scores(
     include_these_pairs = np.argwhere(
         euclid_dist < param["max_dist"]
     )  # array indices of pairs to include, in ML its IncludeThesePairs[:,1]
-    include_these_pairs_idx = np.zeros_like(total_score)
+    include_these_pairs_idx = np.zeros_like(total_score, dtype=bool)
     include_these_pairs_idx[euclid_dist < param["max_dist"]] = 1
 
     # Make a dictionary of score to include
@@ -214,7 +214,9 @@ def extract_metric_scores(
         total_score, within_session, euclid_dist, param, is_first_pass=False
     )
 
-    param["n_expected_matches"] = np.sum((total_score > thrs_opt).astype(int))
+    param["n_expected_matches"] = np.sum(
+        (total_score[include_these_pairs_idx] > thrs_opt).astype(int)
+    )
     prior_match = 1 - (
         param["n_expected_matches"] / len(include_these_pairs)
     )  # these have high
