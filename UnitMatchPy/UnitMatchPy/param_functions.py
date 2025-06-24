@@ -216,14 +216,8 @@ def decay_and_average_waveform(
             dist_to_max_chan = dist_to_max_chan[dist_to_max_chan != 0]
 
             # there is variation in how different programming languages/options fit to a curve
-            popt, pcurve = sp.optimize.curve_fit(
-                exponential_func,
-                dist_to_max_chan.T,
-                tmp_amp,
-                p0=(np.max(tmp_amp), 0.05),
-                method="trf",
-            )
-            # popt, pcurve = sp.optimize.least_squares(exponential_func, Dist2MaxChan, TmpAmp, p0 = (np.max(TmpAmp), 0.05) )
+            popt, pcurve = sp.optimize.curve_fit(exponential_func, dist_to_max_chan.T , tmp_amp, p0 = (np.max(tmp_amp), 0.05), method = 'trf', maxfev=2000)
+            #popt, pcurve = sp.optimize.least_squares(exponential_func, Dist2MaxChan, TmpAmp, p0 = (np.max(TmpAmp), 0.05) )
 
             spatial_decay_fit[i, cv] = popt[1]
             spatial_decay[i, cv] = np.mean(tmp_amp / dist_to_max_chan)

@@ -853,14 +853,12 @@ def test_matches_per_shank(pairs, avg_centroid, sid, param):
             )
 
             if np.all(correct_shank_a == correct_shank_b) != True:
-                print(
-                    f"These pairs may be bad {np.argwhere(correct_shank_a != correct_shank_b)}"
-                )
-                # delete pairs which are one different shanks
-                bad_idxs = np.argwhere(correct_shank_a != correct_shank_b)
-                correct_shank_a = np.delete(correct_shank_a, bad_idxs)
-                correct_shank_b = np.delete(correct_shank_b, bad_idxs)
-
+                #delete pairs which are on different shanks
+                bad_idx = np.argwhere(correct_shank_a != correct_shank_b)[0]
+                print(f'These pairs may be bad {bad_idx}, so are excluded from drift correction')
+                correct_shank_a[bad_idx]=False
+                correct_shank_b[bad_idx]=False
+                
             shank_id_tmp[correct_shank_a] = i
 
             min_dist += shank_dist

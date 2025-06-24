@@ -89,36 +89,59 @@ sp.UniqClu = sp.clu;
 sp.SpikeOnProbe = nan(size(sp.clu));
 clusinfo.UniqueID = (1:length(clusinfo.cluster_id))';
 clusinfo.IMROID = repmat(0,length(clusinfo.cluster_id),1);
-
+clusinfo.AdjustedDepth = clusinfo.depth;
 if Params.UnitMatch
     disp('Assigning correct unique ID')
     PartsPath = strsplit(Params.SaveDir,'\');
     UMOutputAll = dir(fullfile(PartsPath{1},PartsPath{2},PartsPath{3},'**','UnitMatch','UnitMatch.mat'));
+    nAssigned = 0;
     for imroid = 1:length(UMOutputAll)
+        if nAssigned >= numel(KiloSortPaths) % Already have all information
+            break
+        end
         IMROId = strsplit(UMOutputAll(imroid).folder,'\');
         IMROId = strsplit(IMROId{end-1},'_');
-        IMROId = str2num(IMROId{end});
+        if strcmp(IMROId,'AllIMRO') & ~Params.separateIMRO
+            IMROId = 0;
+        else
+            IMROId = str2num(IMROId{end});
+        end
         if Params.separateIMRO & isempty(IMROId)
             continue
         end
 
-        UMOutput = load(fullfile(UMOutputAll(imroid).folder,UMOutputAll(imroid).name),'UMparam','UniqueIDConversion');
+        UMOutput = load(fullfile(UMOutputAll(imroid).folder,UMOutputAll(imroid).name),'UMparam');
         UMparam = UMOutput.UMparam;
         recsesidx = find(ismember(UMparam.KSDir,KiloSortPaths)); % Find which recses id they should have in UM output
         recsesidx2 = find(ismember(KiloSortPaths,UMparam.KSDir));
         if ~any(recsesidx)
             continue
+        else
+            nAssigned = nAssigned + 1;
         end
+
+        UMOutput = load(fullfile(UMOutputAll(imroid).folder,UMOutputAll(imroid).name),'UMparam','UniqueIDConversion');       
         UniqueIDConversion = UMOutput.UniqueIDConversion;
         
         TheseClus = find(ismember(clusinfo.RecSesID,[StoreRecSesID{recsesidx2}]));
+        Adjust4Drift = 0;
         if ~isempty(TheseClus)
             clusinfo.UniqueID(TheseClus) = UniqueIDConversion.UniqueID(ismember(UniqueIDConversion.recsesAll,recsesidx))'; %Assign correct UniqueID
             clusinfo.IMROID(TheseClus) = repmat(IMROId,sum(ismember(clusinfo.RecSesID,[StoreRecSesID{recsesidx2}])),1);
+            for rrid = 1:numel(recsesidx)
+                TheseClus = find(ismember(clusinfo.RecSesID,[StoreRecSesID{recsesidx2(rrid)}]));
+                if recsesidx(rrid) > 1
+                    Adjust4Drift = sqrt(sum(UMparam.drift(recsesidx(rrid)-1,:,end).^2)).*sign(UMparam.drift(recsesidx(rrid)-1,3,end));
+                    clusinfo.AdjustedDepth(TheseClus) = clusinfo.depth(TheseClus) + Adjust4Drift;
+                end
+            end
         end
+        sp.AdjustedspikeDepth = sp.spikeDepths;
         for clusid=1:length(TheseClus)
-            sp.UniqClu(sp.clu==clusinfo.cluster_id(TheseClus(clusid)) & sp.RecSes==clusinfo.RecSesID(TheseClus(clusid))) = clusinfo.UniqueID(clusid);
-            sp.SpikeOnProbe(sp.clu==clusinfo.cluster_id(TheseClus(clusid)) & sp.RecSes==clusinfo.RecSesID(TheseClus(clusid))) = clusinfo.ProbeID(clusid);
+            sp.UniqClu(sp.clu==clusinfo.cluster_id(TheseClus(clusid)) & sp.RecSes==clusinfo.RecSesID(TheseClus(clusid))) = clusinfo.UniqueID(TheseClus(clusid));
+            sp.SpikeOnProbe(sp.clu==clusinfo.cluster_id(TheseClus(clusid)) & sp.RecSes==clusinfo.RecSesID(TheseClus(clusid))) = clusinfo.ProbeID(TheseClus(clusid));
+            sp.AdjustedspikeDepth(sp.clu==clusinfo.cluster_id(TheseClus(clusid)) & sp.RecSes==clusinfo.RecSesID(TheseClus(clusid))) = clusinfo.AdjustedDepth(TheseClus(clusid));
+
         end
         recsesidxIncluded(recsesidx2) = 1;
         for rrid = 1:numel(recsesidx)

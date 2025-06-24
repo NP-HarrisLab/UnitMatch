@@ -8,12 +8,12 @@ DateOpt = cellfun(@(X) X([X.isdir]),DateOpt,'UniformOutput',0);
 DateOpt = cellfun(@(X) {X.name},DateOpt,'UniformOutput',0);
 
 RemoveOldCopies = 1;
-
+Redo = 0; % Redo generally
 LogError = {}; % Keep track of which runs didn't work
 if ~exist('PipelineParamsOri','var')
     PipelineParamsOri = PipelineParams;
 end
-for midx = 1:length(MiceOpt)
+for midx = 18:length(MiceOpt)
     close all % to not overcrowd the graphics card
     PipelineParams = PipelineParamsOri; % Reset
     %% Loading data from kilosort/phy easily
@@ -73,7 +73,6 @@ for midx = 1:length(MiceOpt)
             disp('Unit matching in Matlab')
             AllKiloSortPaths(cell2mat(cellfun(@(X) any(strfind(X,'Chronic')),AllKiloSortPaths,'UniformOutput',0))) = []; %Use separate days and match units via matlab script
             AllKiloSortPaths(cell2mat(cellfun(@(X) any(strfind(X,'Chrc2Sessions')),AllKiloSortPaths,'UniformOutput',0))) = []; %Use separate days and match units via matlab script
-
         else
             disp('Using chronic pyks option')
             AllKiloSortPaths = AllKiloSortPaths(cell2mat(cellfun(@(X) any(strfind(X,'Chronic')),AllKiloSortPaths,'UniformOutput',0))); %Use chronic output from pyks
@@ -90,6 +89,9 @@ for midx = 1:length(MiceOpt)
         continue
     end
 
+    KSDates = cellfun(@(X) strsplit(X,filesep),AllKiloSortPaths,'Uni',0);
+    KSDates = cellfun(@(X) datetime(X{end-2}),KSDates,'uni',0);
+
     %% Remove old copies?
     UnitMatchExist = dir(fullfile(SaveDir,MiceOpt{midx},'**','UnitMatch.mat'));
     if ~isempty(UnitMatchExist)
@@ -98,10 +100,15 @@ for midx = 1:length(MiceOpt)
         MouseAllDone = 0;
     end
     for id = 1:numel(UnitMatchExist)
-        if RemoveOldCopies && UnitMatchExist(id).date<FromDate
+        if RemoveOldCopies && (UnitMatchExist(id).date<FromDate || Redo)
             delete(fullfile(UnitMatchExist(id).folder,'**'))
             rmdir(UnitMatchExist(id).folder)
-
+            MouseAllDone = 0;
+        elseif any(cellfun(@(X) UnitMatchExist(id).date<=X,KSDates)) %Any new data since running this?
+            if RemoveOldCopies
+                delete(fullfile(UnitMatchExist(id).folder,'**'))
+                rmdir(UnitMatchExist(id).folder)
+            end
             MouseAllDone = 0;
         end
     end
@@ -158,6 +165,8 @@ for midx = 1:length(MiceOpt)
 
     ORIParams = PipelineParams; % RESET
 
+    StartUID = 1; % To continue UIDs over an entire dataset (per mouse)
+
     %% Run UnitMatch
     for runid = 1:nRuns
         try
@@ -201,8 +210,13 @@ for midx = 1:length(MiceOpt)
             %% Load other (Default) parameters
             UMparam = DefaultParametersUnitMatch(PipelineParams);
             UnitMatchExist = dir(fullfile(UMparam.SaveDir,'UnitMatch.mat'));
-
-            if isempty(UnitMatchExist) || PipelineParams.RedoUnitMatch || UnitMatchExist.date<FromDate
+            if ~isempty(UnitMatchExist)
+                tmpParam = load(fullfile(UnitMatchExist.folder,UnitMatchExist.name),'UMparam');
+                RedoThisOne = ~(all(ismember(tmpParam.UMparam.KSDir, UMparam.KSDir)) & all(ismember(UMparam.KSDir,tmpParam.UMparam.KSDir)));
+            else
+                RedoThisOne = 1;
+            end
+            if RedoThisOne || PipelineParams.RedoUnitMatch || UnitMatchExist.date<FromDate
 
                 %% Get clusinfo
                 clusinfo = getClusinfo(UMparam.KSDir);
@@ -214,9 +228,12 @@ for midx = 1:length(MiceOpt)
                 %% Actual UnitMatch & Unique UnitID assignment
                 [UniqueIDConversion, MatchTable, WaveformInfo, UMparam] = UnitMatch(clusinfo, UMparam);
                 if UMparam.AssignUniqueID
-                    [UniqueIDConversion, MatchTable] = AssignUniqueID(UMparam.SaveDir);
+                    [UniqueIDConversion, MatchTable] = AssignUniqueID(UMparam.SaveDir,StartUID);
                 end
                 UMtime = toc(UMtime)
+
+                % Update:
+                StartUID = StartUID+max(UniqueIDConversion.UniqueID);
 
                 % Save phy similarity info for individual sessions
                 SaveWithinSessionProba_forPhy(UMparam.SaveDir)

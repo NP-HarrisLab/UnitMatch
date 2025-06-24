@@ -149,7 +149,7 @@ def extract_a_unit_KS4(
     sample_amount,
 ):
     """
-    Extract a single units average waveform from KS4 data
+    Extract a single unit's average waveform from KS4 data
 
     Parameters
     ----------
@@ -166,7 +166,7 @@ def extract_a_unit_KS4(
     n_channels : int
         The number of channels to extract (to exclude sync channels)
     sample_amount : int
-        The number of spike to extract for each unit
+        The number of spikes to extract for each unit
 
     Returns
     -------
@@ -176,47 +176,44 @@ def extract_a_unit_KS4(
     channels = np.arange(0, n_channels)
 
     all_sample_waveforms = np.zeros((sample_amount, spike_width, n_channels))
-    n_waves = 0
     for i, idx in enumerate(sample_idx[:]):
         if np.isnan(idx):
             continue
+        
         start_idx = int(idx - samples_before - 1)
         end_idx = int(idx + samples_after - 1)
-        if start_idx < 0 or end_idx > len(data) or end_idx - start_idx < spike_width:
-            continue
-
-        tmp = data[start_idx:end_idx, channels]  # (spike_width, n_channels)
+        
+        # Extract the data segment
+        tmp = data[max(0, start_idx):min(data.shape[0], end_idx), channels]
         tmp = tmp.astype(np.float32)
-
-        # gaussian smooth, over time gaussian window = 5, sigma = window size / 5
-        tmp = gaussian_filter(
-            tmp, 1, radius=2, axes=0
-        )  # edges are handled differently to ML
-        # window ~ radius *2 + 1
+        
+        # Pad the data if necessary
+        if start_idx < 0:
+            pad_width = (-start_idx, 0)
+            tmp = np.pad(tmp, ((pad_width[0], 0), (0, 0)), mode='constant', constant_values=0)
+        if end_idx > data.shape[0]:
+            pad_width = (0, end_idx - data.shape[0])
+            tmp = np.pad(tmp, ((0, pad_width[1]), (0, 0)), mode='constant', constant_values=0)
+        
+        # Gaussian smooth, over time gaussian window = 5, sigma = window size / 5
+        tmp = gaussian_filter(tmp, 1, radius=2, axes=0)  # edges are handled differently to ML
+        # window ~ radius * 2 + 1
         tmp = tmp - np.mean(tmp[:samples_before, :], axis=0)
-        all_sample_waveforms[n_waves] = tmp
-        n_waves += 1
 
+        all_sample_waveforms[i] = tmp
+
+    # Median and split CVs
+    n_waves = np.sum(~np.isnan(sample_idx[:]))
     cv_lim = np.floor(n_waves / 2).astype(int)
 
-    # find median over samples
+    # Find median over samples
     avg_waveforms = np.zeros((spike_width, n_channels, 2))
-    if n_waves == 1:
-        avg_waveforms[:, :, 0] = all_sample_waveforms[0, :, :]
-        avg_waveforms[:, :, 1] = all_sample_waveforms[0, :, :]
-    elif n_waves > 1:
-        avg_waveforms[:, :, 0] = np.median(
-            all_sample_waveforms[:cv_lim, :, :], axis=0
-        )  # median over samples
-        avg_waveforms[:, :, 1] = np.median(
-            all_sample_waveforms[cv_lim:n_waves, :, :], axis=0
-        )  # median over samples
-    return avg_waveforms  # (sample_amount, spike_width, n_channels, 2)
+    avg_waveforms[:, :, 0] = np.median(all_sample_waveforms[:cv_lim, :, :], axis=0)  # median over samples
+    avg_waveforms[:, :, 1] = np.median(all_sample_waveforms[cv_lim:n_waves, :, :], axis=0)  # median over samples
+    return avg_waveforms
 
 
-def save_avg_waveforms(
-    avg_waveforms, save_dir, good_units, extract_good_units_only=False
-):
+def save_avg_waveforms(avg_waveforms, save_dir, all_unit_ids, good_units, extract_good_units_only=False):
     """
     Saves the average waveforms as a unique .npy file called "UnitX_RawSpikes.npy" in a folder called
     RawWaveforms in the save_dir.
@@ -237,25 +234,19 @@ def save_avg_waveforms(
 
     # ALL waveforms from 0->nUnits
     if extract_good_units_only == False:
-        for i in range(avg_waveforms.shape[0]):
-            filename = os.path.join(tmp_path, f"Unit{i}_RawSpikes.npy")
-            np.save(filename, avg_waveforms[i, :, :, :])
-        print(
-            f"Saved {avg_waveforms.shape[0] + 1} units to RawWaveforms directory, saving all units"
-        )
-        # save in just one file
-        np.save(os.path.join(tmp_path, "AllUnits_RawSpikes.npy"), avg_waveforms)
+        for i, idx in enumerate(all_unit_ids):
+            np.save(f'Unit{idx}_RawSpikes.npy', avg_waveforms[i,:,:,:])
+        print(f'Saved {avg_waveforms.shape[0]} units to RawWaveforms directory, saving all units')
 
     # If only extracting GoodUnits
     else:
         for i, idx in enumerate(good_units):
-            filename = os.path.join(tmp_path, f"Unit{i}_RawSpikes.npy")
-            # ironically need idx[0], to select value so saves with correct name
-            np.save(filename, avg_waveforms[i, :, :, :])
-        print(
-            f"Saved {good_units.shape[0] + 1} units to RawWaveforms directory, only saving good units"
-        )
-        np.save(os.path.join(tmp_path, "GoodUnits_RawSpikes.npy"), avg_waveforms)
+            # need idx, to select value so saves with correct name
+            np.save(f'Unit{idx}_RawSpikes.npy', avg_waveforms[i,:,:,:])
+        print(f'Saved {good_units.shape[0]} units to RawWaveforms directory, only saving good units')
+    os.chdir(current_dir)
+
+
 
 
 # Load in necessary files from KS directory and raw data directory
@@ -321,10 +312,13 @@ def extract_KS_data(KS_dirs, extract_good_units_only=False):
 
     # Load Spike ID's
     spike_ids = []
+    all_unit_ids = []
     for i in range(n_sessions):
         path_tmp = os.path.join(KS_dirs[i], "spike_clusters.npy")
         spike_ids_tmp = np.load(path_tmp)
         spike_ids.append(spike_ids_tmp)
+        all_unit_ids.append(np.unique(spike_ids_tmp))
+
 
     if extract_good_units_only:
         # Good unit ID's
@@ -336,6 +330,6 @@ def extract_KS_data(KS_dirs, extract_good_units_only=False):
 
         good_units = util.get_good_units(unit_labels_paths)
 
-        return spike_ids, spike_times, good_units
+        return spike_ids, spike_times, good_units, all_unit_ids
     else:
-        return spike_ids, spike_times, [None for s in range(n_sessions)]
+        return spike_ids, spike_times, [None for s in range(n_sessions)], all_unit_ids
